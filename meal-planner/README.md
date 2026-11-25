@@ -25,7 +25,7 @@ Your recipes, plan and price edits are saved **in that browser only** (IndexedDB
 For each recipe you haven't planned, the app adds up how much of your leftovers it would use, in dollars. Each item is weighted by how quickly it spoils: produce and dairy count fully, frozen food partly, and pantry goods and spices very little. The best-scoring recipes are shown, along with what each one would add to your list.
 
 ## Files
-- `data/catalog.js`: ingredient list with estimated prices, package sizes, unit conversions and the words that identify each ingredient in recipes. **This is where to correct prices in bulk.**
+- `data/catalog.js`: about 200 ingredients, including every item on the Texas list at seasonalfoodguide.org. Items rarely sold at H-E-B carry a note. The file holds the ingredient list with estimated prices, package sizes, unit conversions and the words that identify each ingredient in recipes. **This is where to correct prices in bulk.**
 - `lib/parse.js`: finds the title, servings and ingredient lines in a PDF, and reads quantities and units.
 - `lib/pdf-extract.js`: turns a PDF into positioned lines of text, which is how two-column layouts get split.
 - `lib/planner.js`: unit conversion, shopping list, leftovers and suggestions.
