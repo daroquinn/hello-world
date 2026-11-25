@@ -63,19 +63,34 @@
     return pdfjsPromise;
   }
 
-  async function importFiles(files) {
+  // items: File objects, or { file, path, folder } when they come from a folder.
+  async function importFiles(items, opt = {}) {
     const status = $('#uploadStatus');
-    const pdfs = [...files].filter((f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
-    if (!pdfs.length) { status.textContent = 'Those files are not PDFs.'; return; }
+    const all = [...items].map((x) => (x instanceof File ? { file: x, path: null, folder: null } : x));
+    const pdfs = all.filter(({ file: f }) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
+    if (!pdfs.length) {
+      if (opt.fromFolder) { status.textContent = `Checked ${opt.fromFolder}: no new recipes.`; renderAll(); }
+      else status.textContent = 'No PDF files were found there.';
+      return;
+    }
     let pdfjs;
     try { pdfjs = await loadPdfjs(); } catch (e) {
       status.innerHTML = '<span class="warn">Could not load the PDF reader. It comes from cdn.jsdelivr.net, so you need an internet connection.</span>';
       return;
     }
-    let ok = 0; const problems = [];
-    for (const [n, f] of pdfs.entries()) {
+    let ok = 0, skipped = 0; const problems = [];
+    for (const [n, { file: f, path, folder }] of pdfs.entries()) {
       status.textContent = `Reading ${n + 1} of ${pdfs.length}: ${f.name}…`;
-      if (state.recipes.some((r) => r.filename === f.name && r.size === f.size)) { problems.push(`${f.name}: already uploaded`); continue; }
+      const same = state.recipes.find((r) => (path && r.sourcePath === path && r.sourceFolder === folder) || (r.filename === f.name && r.size === f.size));
+      if (same) {
+        // Already have it. Link an earlier upload to its place in the folder.
+        if (path && (same.sourcePath !== path || same.sourceFolder !== folder || same.missing)) {
+          same.sourcePath = path; same.sourceFolder = folder; same.missing = false;
+          await S.put('recipes', same);
+        }
+        skipped++;
+        continue;
+      }
       try {
         const buf = await f.arrayBuffer();
         const doc = await pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
@@ -84,6 +99,7 @@
         const parsed = P.parseRecipe(lines, f.name, state.match);
         const id = uid();
         const recipe = { id, filename: f.name, size: f.size, addedAt: Date.now(), title: parsed.title, servings: parsed.servings, ingredients: parsed.ingredients, text: parsed.text };
+        if (path) { recipe.sourcePath = path; recipe.sourceFolder = folder; }
         await S.put('files', { id, blob: new Blob([buf], { type: 'application/pdf' }) });
         await S.put('recipes', recipe);
         state.recipes.push(recipe);
@@ -93,8 +109,87 @@
         problems.push(`${f.name}: ${e.message || 'could not be read'}`);
       }
     }
-    status.innerHTML = `Added ${ok} recipe${ok === 1 ? '' : 's'}.` + (problems.length ? ` <span class="warn">${problems.map(esc).join('; ')}</span>` : '') + (ok ? ' Open a recipe to check its ingredients.' : '');
+    const where = opt.fromFolder ? `Checked ${opt.fromFolder}: ` : '';
+    status.innerHTML = esc(where) + (ok ? `added ${ok} new recipe${ok === 1 ? '' : 's'}` : 'no new recipes').replace(/^./, (c) => (where ? c : c.toUpperCase()))
+      + (skipped ? ` (${skipped} already imported)` : '') + '.'
+      + (problems.length ? ` <span class="warn">${problems.map(esc).join('; ')}</span>` : '')
+      + (ok ? ' Open a recipe to check its ingredients.' : '');
     renderAll();
+  }
+
+  // ---------- Recipes folder ----------
+  // Vivaldi, Chrome and Edge can remember a folder (File System Access API).
+  // Other browsers, and pages shown inside another page, fall back to a one-off folder import.
+  const canRememberFolder = 'showDirectoryPicker' in window && window.self === window.top;
+  let folderNeedsPermission = false;
+
+  async function listPdfs(dir, prefix = '') {
+    const out = [];
+    for await (const [name, h] of dir.entries()) {
+      if (name.startsWith('.')) continue;
+      if (h.kind === 'file' && /\.pdf$/i.test(name)) out.push({ handle: h, path: prefix + name });
+      else if (h.kind === 'directory') out.push(...(await listPdfs(h, prefix + name + '/')));
+    }
+    return out;
+  }
+
+  // Mark recipes whose PDF is no longer in the folder (or clear the mark if it's back).
+  async function flagMissing(folder, foundPaths) {
+    for (const r of state.recipes) {
+      if (r.sourceFolder !== folder || !r.sourcePath) continue;
+      const missing = !foundPaths.has(r.sourcePath);
+      if (!!r.missing !== missing) { r.missing = missing; await S.put('recipes', r); }
+    }
+  }
+
+  async function scanFolder(interactive) {
+    const h = state.folder;
+    if (!h) return;
+    let perm = 'denied';
+    try {
+      perm = await h.queryPermission({ mode: 'read' });
+      if (perm !== 'granted' && interactive) perm = await h.requestPermission({ mode: 'read' });
+    } catch (e) { perm = 'denied'; }
+    folderNeedsPermission = perm !== 'granted';
+    renderFolderBar();
+    if (folderNeedsPermission) return;
+    $('#uploadStatus').textContent = `Checking ${h.name} for new recipes…`;
+    let entries;
+    try { entries = await listPdfs(h); } catch (e) {
+      $('#uploadStatus').innerHTML = `<span class="warn">Couldn't read ${esc(h.name)}. It may have been moved or deleted. Choose the folder again.</span>`;
+      return;
+    }
+    await flagMissing(h.name, new Set(entries.map((e) => e.path)));
+    const known = new Set(state.recipes.filter((r) => r.sourceFolder === h.name && !r.missing).map((r) => r.sourcePath));
+    const items = [];
+    for (const e of entries) {
+      if (known.has(e.path)) continue;
+      items.push({ file: await e.handle.getFile(), path: e.path, folder: h.name });
+    }
+    await importFiles(items, { fromFolder: h.name });
+    const missing = state.recipes.filter((r) => r.sourceFolder === h.name && r.missing).length;
+    if (missing) $('#uploadStatus').insertAdjacentHTML('beforeend', ` <span class="warn">${missing} recipe${missing === 1 ? '' : 's'} no longer in the folder (marked on the cards).</span>`);
+  }
+
+  function renderFolderBar() {
+    const info = $('#folderInfo');
+    const h = state.folder;
+    $('#pickFolder').hidden = !canRememberFolder;
+    $('#pickFolder').textContent = h ? 'Change folder' : 'Choose recipes folder';
+    $('#scanFolder').hidden = !canRememberFolder || !h;
+    $('#scanFolder').textContent = folderNeedsPermission ? 'Reconnect folder' : 'Check for new recipes';
+    $('#forgetFolder').hidden = !canRememberFolder || !h;
+    if (!canRememberFolder) {
+      info.innerHTML = window.self !== window.top
+        ? 'To link a recipes folder, download the app and open it in Vivaldi, Chrome or Edge. Here you can import a folder\'s PDFs one time.'
+        : 'This browser can\'t remember a folder. Use <em>Import a folder</em> to add every PDF in one.';
+    } else if (!h) {
+      info.innerHTML = 'Link the folder where you keep recipe PDFs. New PDFs you save there are added when you open the app.';
+    } else if (folderNeedsPermission) {
+      info.innerHTML = `Recipes folder: <strong>${esc(h.name)}</strong>. <span class="warn">Click <em>Reconnect folder</em> to let the app read it again.</span>`;
+    } else {
+      info.innerHTML = `Recipes folder: <strong>${esc(h.name)}</strong> <span class="small">(subfolders included)</span>`;
+    }
   }
 
   // ---------- Recipes tab ----------
@@ -130,7 +225,7 @@
       const planned = inPlan.has(r.id);
       return `<article class="card ${planned ? 'inplan' : ''}">
         <h4 data-open="${r.id}">${highlight(r.title, tokens)}</h4>
-        <div class="meta">${r.servings ? `Serves ${r.servings} · ` : ''}${ings.length} ingredients${unmatched ? ` · <span class="warn">${unmatched} need a store item</span>` : ''}</div>
+        <div class="meta">${r.servings ? `Serves ${r.servings} · ` : ''}${ings.length} ingredients${unmatched ? ` · <span class="warn">${unmatched} need a store item</span>` : ''}${r.missing ? ` · <span class="warn" title="${esc(r.sourceFolder + '/' + r.sourcePath)}">file missing from folder</span>` : ''}</div>
         <div class="actions">
           ${planned ? `<button class="btn small" data-unplan="${r.id}">✓ In plan, remove</button>` : `<button class="btn small primary" data-plan="${r.id}">Add to plan</button>`}
           <button class="btn small" data-open="${r.id}">Review</button>
@@ -364,6 +459,32 @@
   });
 
   $('#fileInput').addEventListener('change', (e) => { importFiles(e.target.files); e.target.value = ''; });
+  $('#folderInput').addEventListener('change', (e) => {
+    const files = [...e.target.files];
+    if (!files.length) return;
+    const folder = (files[0].webkitRelativePath || '').split('/')[0] || 'folder';
+    const items = files.filter((f) => !/(^|\/)\./.test(f.webkitRelativePath)).map((f) => ({ file: f, path: f.webkitRelativePath.split('/').slice(1).join('/'), folder }));
+    flagMissing(folder, new Set(items.map((i) => i.path))).then(() => importFiles(items, { fromFolder: folder }));
+    e.target.value = '';
+  });
+  $('#pickFolder').addEventListener('click', async () => {
+    try {
+      const h = await window.showDirectoryPicker({ id: 'recipes', mode: 'read' });
+      state.folder = h;
+      try { await S.setKV('folderHandle', h); } catch (err) { /* can't remember it; still scan now */ }
+      folderNeedsPermission = false;
+      await scanFolder(true);
+    } catch (err) {
+      if (err.name !== 'AbortError') $('#uploadStatus').innerHTML = `<span class="warn">Couldn't open that folder: ${esc(err.message)}</span>`;
+    }
+  });
+  $('#scanFolder').addEventListener('click', () => scanFolder(true));
+  $('#forgetFolder').addEventListener('click', async () => {
+    state.folder = null; folderNeedsPermission = false;
+    try { await S.setKV('folderHandle', null); } catch (err) { /* ignore */ }
+    renderFolderBar();
+    $('#uploadStatus').textContent = 'Folder unlinked. Your recipes stay in the app.';
+  });
   const drop = $('#drop');
   ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
   ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
@@ -491,10 +612,13 @@
       $('#uploadStatus').innerHTML = '<span class="warn">This browser blocked local storage, so nothing you do here will be saved.</span>';
     }
     $('#includeOptional').checked = state.includeOptional;
+    if (canRememberFolder) { try { state.folder = await S.getKV('folderHandle', null); } catch (e) { state.folder = null; } }
     rebuildCatalog();
     let tab = 'recipes';
     try { tab = localStorage.getItem('mp-tab') || tab; } catch (e) { /* ignore */ }
     switchTab(tab);
     renderAll();
+    renderFolderBar();
+    if (state.folder) scanFolder(false); // checks right away if the browser still allows it, otherwise shows Reconnect
   })();
 })();

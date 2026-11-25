@@ -28,6 +28,15 @@
         <strong>Upload recipe PDFs</strong>
         <span>Drop files here or click to choose. You can add several at once.</span>
       </label>
+      <div class="folderbar">
+        <p id="folderInfo"></p>
+        <div class="toolbar">
+          <button id="pickFolder" class="btn" hidden>Choose recipes folder</button>
+          <button id="scanFolder" class="btn primary" hidden>Check for new recipes</button>
+          <label class="btn">Import a folder<input type="file" id="folderInput" webkitdirectory multiple hidden></label>
+          <button id="forgetFolder" class="btn ghost" hidden>Unlink folder</button>
+        </div>
+      </div>
       <div id="uploadStatus" class="status" aria-live="polite"></div>
       <div class="searchbar">
         <input type="search" id="search" placeholder="Search recipe titles… (e.g. tofu, pasta, spinach)" autocomplete="off">
