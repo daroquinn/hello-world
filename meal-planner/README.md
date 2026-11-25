@@ -15,7 +15,7 @@ Your recipes, plan and price edits are saved **in that browser only** (IndexedDB
 
 | Tab | |
 |---|---|
-| **Recipes** | Upload PDFs (drag and drop, several at once). Search by words in the title, or tick "also search ingredients". Click **Review** to check and fix what was read from a PDF: edit a line, choose a different store item, mark it optional, or remove it. |
+| **Recipes** | Upload PDFs (drag and drop, several at once). Each recipe is named after its file name (underscores become spaces), so put the dish and any key words in the file name. Search by words in the title, or tick "also search ingredients". Click **Review** to check and fix what was read from a PDF: edit a line, choose a different store item, mark it optional, or remove it. |
 | **Recipes folder** | In Vivaldi, Chrome or Edge, click **Choose recipes folder** once. Subfolders count too. Each time you open the app it checks the folder and adds new PDFs, skipping ones it already has. If the browser asks again for permission, click **Reconnect folder**. If a PDF disappears from the folder, its recipe stays in the app and is marked "file missing from folder". In other browsers, **Import a folder** adds every PDF in a folder you pick, one time. Folder linking needs the downloaded copy; it doesn't work on the hosted page. |
 | **Plan** | The recipes you've picked, each with a 0.5×–3× scale. Shows the estimated cost, what will be left over from the packages you buy, and **Use up your leftovers** suggestions. |
 | **Shopping list** | Grouped by store section. Shows how much you need, what to buy (whole packages), estimated cost and leftovers. Tick items off as you shop. You can copy it as text or print it. |

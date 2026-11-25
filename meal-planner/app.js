@@ -179,7 +179,7 @@
         if (read.why) problems.push(`${f.name}: ${read.why}`);
         if (read.ocr) scanned++;
         const id = uid();
-        const recipe = { id, filename: f.name, size: f.size, addedAt: Date.now(), title: parsed.title, servings: parsed.servings, ingredients: parsed.ingredients, text: parsed.text, ocr: read.ocr };
+        const recipe = { id, filename: f.name, size: f.size, addedAt: Date.now(), title: parsed.title, pdfTitle: parsed.pdfTitle, servings: parsed.servings, ingredients: parsed.ingredients, text: parsed.text, ocr: read.ocr };
         if (path) { recipe.sourcePath = path; recipe.sourceFolder = folder; }
         await S.put('files', { id, blob: new Blob([buf], { type: 'application/pdf' }) });
         await S.put('recipes', recipe);
@@ -329,7 +329,7 @@
     if (!r) return;
     $('#dTitle').value = r.title;
     $('#dServings').value = r.servings || '';
-    $('#dFile').textContent = r.filename;
+    $('#dFile').textContent = r.pdfTitle && P.fold(r.pdfTitle) !== P.fold(r.title) ? `File: ${r.filename} · Heading in the PDF: ${r.pdfTitle}` : `File: ${r.filename}`;
     const rows = r.ingredients.map((ing, idx) => {
       if (ing.removed) return '';
       if (ing.header) return `<tr class="hdr"><td colspan="4">${esc(ing.raw)}</td><td><button class="btn small ghost" data-rm="${idx}" title="Remove">✕</button></td></tr>`;
@@ -592,7 +592,7 @@
   });
 
   // dialog
-  $('#dTitle').addEventListener('change', async (e) => { const r = state.recipes.find((x) => x.id === openId); r.title = e.target.value.trim() || r.title; await saveOpen(); });
+  $('#dTitle').addEventListener('change', async (e) => { const r = state.recipes.find((x) => x.id === openId); const v = e.target.value.trim(); if (v && v !== r.title) { r.title = v; r.titleEdited = true; } await saveOpen(); });
   $('#dServings').addEventListener('change', async (e) => { const r = state.recipes.find((x) => x.id === openId); r.servings = +e.target.value || null; await saveOpen(); });
   $('#dAddLine').addEventListener('click', async () => {
     const v = $('#dNewLine').value.trim(); if (!v) return;
@@ -641,7 +641,8 @@
       const read = await readPdf(await f.blob.arrayBuffer(), r.filename, (msg) => { note.textContent = msg; });
       if (read.lines.length) {
         const parsed = P.parseRecipe(read.lines, r.filename, state.match);
-        Object.assign(r, { title: parsed.title, servings: parsed.servings, ingredients: parsed.ingredients, text: parsed.text, ocr: read.ocr });
+        Object.assign(r, { pdfTitle: parsed.pdfTitle, servings: parsed.servings, ingredients: parsed.ingredients, text: parsed.text, ocr: read.ocr });
+        if (!r.titleEdited) r.title = parsed.title;
         note.textContent = `Read ${parsed.ingredients.filter((i) => !i.header).length} ingredient lines${read.ocr ? ' with text recognition. Check them against the original' : ''}.`;
         await saveOpen(); renderDialog();
       } else note.innerHTML = `<span class="warn">Couldn't read any text: ${esc(read.why || 'unknown problem')}.</span>`;
@@ -724,6 +725,17 @@
     } catch (e) {
       $('#uploadStatus').innerHTML = '<span class="warn">This browser blocked local storage, so nothing you do here will be saved.</span>';
     }
+    // One-time switch: name existing recipes after their files (unless you renamed one yourself).
+    try {
+      if (!(await S.getKV('titlesFromFilenames', false))) {
+        for (const r of state.recipes) {
+          if (r.titleEdited || !r.filename) continue;
+          const t = P.cleanFilename(r.filename);
+          if (t !== r.title) { r.pdfTitle = r.pdfTitle || r.title; r.title = t; await S.put('recipes', r); }
+        }
+        await S.setKV('titlesFromFilenames', true);
+      }
+    } catch (e) { /* storage blocked; titles stay as they are */ }
     $('#includeOptional').checked = state.includeOptional;
     if (canRememberFolder) { try { state.folder = await S.getKV('folderHandle', null); } catch (e) { state.folder = null; } }
     rebuildCatalog();

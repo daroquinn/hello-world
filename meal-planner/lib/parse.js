@@ -254,16 +254,17 @@
     return title.replace(/\s+/g, ' ').trim();
   }
 
+  // The recipe's name is its file name, minus the extension. Underscores become spaces.
+  // (The 8-character hex prefix is only added by some upload tools.)
   function cleanFilename(fn) {
-    return (fn || 'Untitled recipe')
+    const name = String(fn || '')
+      .replace(/^.*[\\/]/, '')
       .replace(/\.pdf$/i, '')
-      .replace(/^[0-9a-f]{8}-/, '')
-      .replace(/[_]+/g, ' ')
-      .replace(/\s*\|.*$/, '')
-      .replace(/\s+-\s+.*$/, '')
-      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/^[0-9a-f]{8}-(?=.)/, '')
+      .replace(/_+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+    return name || 'Untitled recipe';
   }
 
   function findServings(lines) {
@@ -397,7 +398,8 @@
       ingredients.push(p);
     }
     const text = lines.map((l) => l.text).join('\n');
-    return { title, servings, ingredients, text };
+    // The title shown in the app comes from the file name; the heading found in the PDF is kept for reference.
+    return { title: cleanFilename(filename), pdfTitle: title, servings, ingredients, text };
   }
 
   const api = { parseRecipe, parseIngredient, buildMatcher, unitInfo, fold, normFractions, cleanFilename };
