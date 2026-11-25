@@ -238,7 +238,8 @@
     const score = (l) => {
       const words = fold(l.text).split(/[^a-z]+/).filter((w) => w.length > 2);
       const overlap = words.filter((w) => fileWords.has(w)).length;
-      return l.size + overlap * 4 - (/^[A-Z\s&|]+$/.test(l.text) && overlap === 0 ? 3 : 0);
+      // Matching the file name counts a lot, except for paragraph-length lines.
+      return l.size + overlap * (words.length <= 14 ? 8 : 2) - (/^[A-Z\s&|]+$/.test(l.text) && overlap === 0 ? 3 : 0);
     };
     let best = cands[0];
     for (const l of cands) if (score(l) > score(best)) best = l;
@@ -294,8 +295,9 @@
           const pageLines = lines.slice(i + 1).filter((l) => l.page === splitPage);
           const leftMin = Math.min(...pageLines.map((l) => l.x));
           const counts = {};
-          for (const l of pageLines) for (const it of l.items) {
-            if (it.x > leftMin + 60) { const k = Math.round(it.x / 3) * 3; counts[k] = (counts[k] || 0) + 1; }
+          // Count where runs of text start (not every word: OCR reports words one by one).
+          for (const l of pageLines) for (const sg of l.segments) {
+            if (sg.x > leftMin + 60) { const k = Math.round(sg.x / 3) * 3; counts[k] = (counts[k] || 0) + 1; }
           }
           const xs = Object.keys(counts).map(Number).filter((k) => counts[k] >= 3).sort((a, b) => a - b);
           if (xs.length) splitX = xs[0] - 3;

@@ -64,6 +64,86 @@
   }
 
   // items: File objects, or { file, path, folder } when they come from a folder.
+  // ---------- Text recognition (OCR) for scanned / image-only PDFs ----------
+  // Uses Tesseract.js from cdn.jsdelivr.net. The hosted page's security rules block
+  // the language data download, so OCR only runs in the downloaded app.
+  const OCR = {
+    script: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
+    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',
+    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1',
+    langPath: 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int',
+    maxPages: 6,
+  };
+  const canOcr = window.self === window.top;
+  let ocrWorkerP = null;
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src; s.onload = resolve; s.onerror = () => reject(new Error('could not load the text-recognition library'));
+      document.head.appendChild(s);
+    });
+  }
+  function getOcrWorker() {
+    if (!ocrWorkerP) {
+      ocrWorkerP = (async () => {
+        if (!window.Tesseract) await loadScript(OCR.script);
+        return window.Tesseract.createWorker('eng', 1, { workerPath: OCR.workerPath, corePath: OCR.corePath, langPath: OCR.langPath });
+      })();
+      ocrWorkerP.catch(() => { ocrWorkerP = null; });
+    }
+    return ocrWorkerP;
+  }
+  // Render each page to an image, recognise the words, and turn them into the same
+  // positioned lines the normal PDF reader produces.
+  async function ocrLines(doc, onPage) {
+    const worker = await getOcrWorker();
+    const out = [];
+    const pages = Math.min(doc.numPages, OCR.maxPages);
+    for (let p = 1; p <= pages; p++) {
+      onPage(p, pages);
+      const page = await doc.getPage(p);
+      const base = page.getViewport({ scale: 1 });
+      const scale = Math.min(3, 2400 / base.width);
+      const vp = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(vp.width); canvas.height = Math.round(vp.height);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      const { data } = await worker.recognize(canvas, {}, { blocks: true, text: true });
+      const H = canvas.height;
+      const items = [];
+      for (const block of data.blocks || []) for (const par of block.paragraphs || []) for (const line of par.lines || []) {
+        const lh = line.bbox.y1 - line.bbox.y0;
+        const y = (H - line.bbox.y1) / scale;
+        const size = Math.max(4, (lh * 0.8) / scale);
+        for (const w of line.words || []) {
+          const t = (w.text || '').trim();
+          if (!t) continue;
+          items.push({ str: t, x: w.bbox.x0 / scale, y, w: (w.bbox.x1 - w.bbox.x0) / scale, size });
+        }
+      }
+      out.push(...window.MP_PDF.groupItems(items, p));
+    }
+    return out;
+  }
+
+  // Read a PDF's text: the embedded text if there is any, otherwise OCR.
+  async function readPdf(buf, name, status) {
+    const pdfjs = await loadPdfjs();
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
+    let lines = await window.MP_PDF.extractLines(doc);
+    if (lines.length) return { lines, ocr: false };
+    if (!canOcr) return { lines: [], ocr: false, why: 'it\'s a scanned image; open the downloaded app to read it' };
+    try {
+      lines = await ocrLines(doc, (p, n) => status(`Reading ${name} as a scanned image, page ${p} of ${n}. This takes a few seconds per page…`));
+    } catch (e) {
+      console.error(e);
+      return { lines: [], ocr: false, why: `it's a scanned image and text recognition failed (${e.message || e}). Text recognition needs an internet connection` };
+    }
+    return { lines, ocr: true, why: lines.length ? null : 'no readable text, even with text recognition' };
+  }
+
   async function importFiles(items, opt = {}) {
     const status = $('#uploadStatus');
     const all = [...items].map((x) => (x instanceof File ? { file: x, path: null, folder: null } : x));
@@ -78,7 +158,7 @@
       status.innerHTML = '<span class="warn">Could not load the PDF reader. It comes from cdn.jsdelivr.net, so you need an internet connection.</span>';
       return;
     }
-    let ok = 0, skipped = 0; const problems = [];
+    let ok = 0, skipped = 0, scanned = 0; const problems = [];
     for (const [n, { file: f, path, folder }] of pdfs.entries()) {
       status.textContent = `Reading ${n + 1} of ${pdfs.length}: ${f.name}…`;
       const same = state.recipes.find((r) => (path && r.sourcePath === path && r.sourceFolder === folder) || (r.filename === f.name && r.size === f.size));
@@ -93,12 +173,13 @@
       }
       try {
         const buf = await f.arrayBuffer();
-        const doc = await pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
-        const lines = await window.MP_PDF.extractLines(doc);
-        if (!lines.length) { problems.push(`${f.name}: no text found (it may be a scanned image)`); continue; }
-        const parsed = P.parseRecipe(lines, f.name, state.match);
+        const read = await readPdf(buf, f.name, (msg) => { status.textContent = `(${n + 1} of ${pdfs.length}) ${msg}`; });
+        // Keep the recipe even when no text could be read, so you can type its ingredients in.
+        const parsed = read.lines.length ? P.parseRecipe(read.lines, f.name, state.match) : { title: P.cleanFilename(f.name), servings: null, ingredients: [], text: '' };
+        if (read.why) problems.push(`${f.name}: ${read.why}`);
+        if (read.ocr) scanned++;
         const id = uid();
-        const recipe = { id, filename: f.name, size: f.size, addedAt: Date.now(), title: parsed.title, servings: parsed.servings, ingredients: parsed.ingredients, text: parsed.text };
+        const recipe = { id, filename: f.name, size: f.size, addedAt: Date.now(), title: parsed.title, servings: parsed.servings, ingredients: parsed.ingredients, text: parsed.text, ocr: read.ocr };
         if (path) { recipe.sourcePath = path; recipe.sourceFolder = folder; }
         await S.put('files', { id, blob: new Blob([buf], { type: 'application/pdf' }) });
         await S.put('recipes', recipe);
@@ -112,6 +193,7 @@
     const where = opt.fromFolder ? `Checked ${opt.fromFolder}: ` : '';
     status.innerHTML = esc(where) + (ok ? `added ${ok} new recipe${ok === 1 ? '' : 's'}` : 'no new recipes').replace(/^./, (c) => (where ? c : c.toUpperCase()))
       + (skipped ? ` (${skipped} already imported)` : '') + '.'
+      + (scanned ? ` ${scanned} ${scanned === 1 ? 'was a scanned image' : 'were scanned images'} read with text recognition, so check ${scanned === 1 ? 'it' : 'them'} carefully.` : '')
       + (problems.length ? ` <span class="warn">${problems.map(esc).join('; ')}</span>` : '')
       + (ok ? ' Open a recipe to check its ingredients.' : '');
     renderAll();
@@ -225,7 +307,7 @@
       const planned = inPlan.has(r.id);
       return `<article class="card ${planned ? 'inplan' : ''}">
         <h4 data-open="${r.id}">${highlight(r.title, tokens)}</h4>
-        <div class="meta">${r.servings ? `Serves ${r.servings} · ` : ''}${ings.length} ingredients${unmatched ? ` · <span class="warn">${unmatched} need a store item</span>` : ''}${r.missing ? ` · <span class="warn" title="${esc(r.sourceFolder + '/' + r.sourcePath)}">file missing from folder</span>` : ''}</div>
+        <div class="meta">${r.servings ? `Serves ${r.servings} · ` : ''}${ings.length} ingredients${unmatched ? ` · <span class="warn">${unmatched} need a store item</span>` : ''}${r.missing ? ` · <span class="warn" title="${esc(r.sourceFolder + '/' + r.sourcePath)}">file missing from folder</span>` : ''}${!ings.length ? ' · <span class="warn">no ingredients yet</span>' : r.ocr ? ' · <span class="small">read from a scan, check it</span>' : ''}</div>
         <div class="actions">
           ${planned ? `<button class="btn small" data-unplan="${r.id}">✓ In plan, remove</button>` : `<button class="btn small primary" data-plan="${r.id}">Add to plan</button>`}
           <button class="btn small" data-open="${r.id}">Review</button>
@@ -277,6 +359,10 @@
   function openRecipe(id) {
     openId = id;
     resetPdfView();
+    const rec = state.recipes.find((x) => x.id === id);
+    $('#dNote').innerHTML = rec && !rec.ingredients.length
+      ? '<span class="warn">No ingredients were read from this PDF.</span> Type them in below, or use <em>Show original PDF</em> to see the page.'
+      : rec && rec.ocr ? 'This recipe was read from a scanned image with text recognition. Compare it with the original, since some words or numbers may be misread.' : '';
     renderDialog();
     $('#recipeDialog').showModal();
   }
@@ -536,6 +622,33 @@
       }
     } catch (e) { box.innerHTML = '<p class="warn">This PDF couldn\'t be displayed. The PDF reader needs an internet connection.</p>'; }
   });
+  // Read the stored PDF again (e.g. after a parser update, or a scan that failed before).
+  let rereadArmed = null;
+  $('#dReread').addEventListener('click', async () => {
+    const btn = $('#dReread');
+    const r = state.recipes.find((x) => x.id === openId);
+    if (!rereadArmed) {
+      btn.textContent = 'Click again: replaces this list';
+      rereadArmed = setTimeout(() => { rereadArmed = null; btn.textContent = 'Read PDF again'; }, 4000);
+      return;
+    }
+    clearTimeout(rereadArmed); rereadArmed = null;
+    const f = await S.get('files', r.id);
+    const note = $('#dNote');
+    if (!f) { note.innerHTML = '<span class="warn">The original PDF isn\'t stored for this recipe, so it can\'t be read again.</span>'; btn.textContent = 'Read PDF again'; return; }
+    btn.disabled = true; btn.textContent = 'Reading…';
+    try {
+      const read = await readPdf(await f.blob.arrayBuffer(), r.filename, (msg) => { note.textContent = msg; });
+      if (read.lines.length) {
+        const parsed = P.parseRecipe(read.lines, r.filename, state.match);
+        Object.assign(r, { title: parsed.title, servings: parsed.servings, ingredients: parsed.ingredients, text: parsed.text, ocr: read.ocr });
+        note.textContent = `Read ${parsed.ingredients.filter((i) => !i.header).length} ingredient lines${read.ocr ? ' with text recognition. Check them against the original' : ''}.`;
+        await saveOpen(); renderDialog();
+      } else note.innerHTML = `<span class="warn">Couldn't read any text: ${esc(read.why || 'unknown problem')}.</span>`;
+    } catch (e) { note.innerHTML = `<span class="warn">Couldn't read the PDF: ${esc(e.message)}</span>`; }
+    btn.disabled = false; btn.textContent = 'Read PDF again';
+  });
+
   let deleteArmed = null;
   $('#dDelete').addEventListener('click', async () => {
     const r = state.recipes.find((x) => x.id === openId);

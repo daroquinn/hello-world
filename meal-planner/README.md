@@ -39,5 +39,5 @@ For each recipe you haven't planned, the app adds up how much of your leftovers 
   - the banana bread's topping, which sits on a separate printed half-page
   - the second recipe (soor) in the Swiss chard PDF
   - quantities written mid-sentence, such as "zest from 2 oranges"
-- Scanned or image-only PDFs have no text to read, so you'll need to type their ingredients in yourself.
+- **Scanned or image-only PDFs** (from a scanner, a phone scanning app, or a page saved as a picture) contain no text. The downloaded app reads them with text recognition (Tesseract.js, loaded from cdn.jsdelivr.net), at a few seconds per page and up to 6 pages. Text recognition can misread words and numbers such as fractions, so these recipes are marked "read from a scan, check it". The hosted page can't run text recognition: it saves scanned recipes without ingredients, which you can type in, or reopen in the downloaded app and use **Read PDF again**.
 - Unit conversions such as cups to grams, or a "bunch" of cilantro, use typical values, so amounts are approximate. These amounts are marked ≈.
