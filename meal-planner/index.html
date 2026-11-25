@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meal Planner</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>Meal Planner</h1>
+      <p class="sub">Prices are estimates for H-E-B Riverside Dr, Austin. <a href="#" data-tab="prices">Edit them</a>.</p>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="recipes" class="active">Recipes</button>
+      <button role="tab" data-tab="plan">Plan <span class="badge" id="planCount">0</span></button>
+      <button role="tab" data-tab="list">Shopping list <span class="badge" id="listTotal">$0</span></button>
+      <button role="tab" data-tab="prices">Prices &amp; pantry</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- RECIPES -->
+    <section id="tab-recipes" class="tab active">
+      <label class="drop" id="drop">
+        <input type="file" id="fileInput" accept="application/pdf,.pdf" multiple hidden>
+        <strong>Upload recipe PDFs</strong>
+        <span>Drop files here or click to choose. You can add several at once.</span>
+      </label>
+      <div id="uploadStatus" class="status" aria-live="polite"></div>
+      <div class="searchbar">
+        <input type="search" id="search" placeholder="Search recipe titles… (e.g. tofu, pasta, spinach)" autocomplete="off">
+        <label class="check"><input type="checkbox" id="searchIngredients"> also search ingredients</label>
+      </div>
+      <div id="recipeList" class="cards"></div>
+    </section>
+
+    <!-- PLAN -->
+    <section id="tab-plan" class="tab">
+      <div class="two-col">
+        <div>
+          <h2>This plan</h2>
+          <div id="planList"></div>
+          <div id="planSummary" class="summary"></div>
+          <h3>Left over after cooking</h3>
+          <p class="hint">What you'll have left from the packages you buy.</p>
+          <div id="leftovers"></div>
+        </div>
+        <aside>
+          <h2>Use up your leftovers</h2>
+          <p class="hint">Recipes you've uploaded but haven't planned, ranked by how much leftover food they use. Fresh food counts for more than pantry staples.</p>
+          <div id="suggestions"></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- SHOPPING LIST -->
+    <section id="tab-list" class="tab">
+      <div class="toolbar">
+        <label class="check"><input type="checkbox" id="includeOptional" checked> include optional ingredients</label>
+        <span class="spacer"></span>
+        <button id="copyList" class="btn">Copy as text</button>
+        <button id="printList" class="btn">Print</button>
+        <button id="clearChecked" class="btn ghost">Uncheck all</button>
+      </div>
+      <div id="shoppingList"></div>
+    </section>
+
+    <!-- PRICES & PANTRY -->
+    <section id="tab-prices" class="tab">
+      <div class="notice">
+        <strong>About these prices.</strong> They're hand-entered estimates of typical H-E-B shelf prices in Austin. They don't come from heb.com and aren't checked against the Riverside Dr store's stock. H-E-B has no public price or inventory API.
+        Change any price below and your edits are saved in this browser. Each item's <em>H-E-B</em> link opens a search on heb.com, where you can check the real price for your selected store.
+      </div>
+      <div class="toolbar">
+        <input type="search" id="priceSearch" placeholder="Filter items…">
+        <label class="check"><input type="checkbox" id="pantryOnly"> only items I have at home</label>
+        <span class="spacer"></span>
+        <button id="exportData" class="btn">Back up data</button>
+        <label class="btn">Restore backup<input type="file" id="importData" accept="application/json" hidden></label>
+      </div>
+      <div id="priceTable"></div>
+      <details class="addItem">
+        <summary>Add a new ingredient</summary>
+        <form id="addItemForm" class="grid-form">
+          <label>Name <input name="name" required placeholder="e.g. Miso paste"></label>
+          <label>Words that identify it in recipes <input name="aliases" placeholder="miso, white miso"></label>
+          <label>Store section
+            <select name="cat"></select>
+          </label>
+          <label>Measured in
+            <select name="base"><option value="g">grams (weight)</option><option value="ml">millilitres (liquid)</option><option value="each">count (each)</option></select>
+          </label>
+          <label>Package size (in that unit) <input name="size" type="number" step="any" min="0" required placeholder="400"></label>
+          <label>Package description <input name="label" placeholder="14 oz tub"></label>
+          <label>Price ($) <input name="price" type="number" step="0.01" min="0" required placeholder="4.98"></label>
+          <label>Grams per cup (optional) <input name="cup" type="number" step="any" min="0" placeholder="e.g. 250"></label>
+          <button class="btn primary" type="submit">Add item</button>
+        </form>
+      </details>
+    </section>
+  </main>
+
+  <dialog id="recipeDialog">
+    <form method="dialog" class="dialog-head">
+      <input id="dTitle" class="title-input" aria-label="Recipe title">
+      <button class="btn ghost" value="close" aria-label="Close">✕</button>
+    </form>
+    <div class="dialog-meta">
+      <label>Serves <input id="dServings" type="number" min="1" step="1"></label>
+      <span id="dFile" class="hint"></span>
+      <span class="spacer"></span>
+      <button id="dViewPdf" class="btn">Open PDF</button>
+      <button id="dDelete" class="btn danger">Delete recipe</button>
+    </div>
+    <p class="hint">Check what was read from the PDF. Fix the text, pick the right store item, or remove a line. Changes save automatically.</p>
+    <div id="dIngredients"></div>
+    <div class="row-add">
+      <input id="dNewLine" placeholder="Add an ingredient, e.g. 2 cups baby spinach">
+      <button id="dAddLine" class="btn">Add</button>
+    </div>
+  </dialog>
+
+  <template id="tplEmpty"><div class="empty"></div></template>
+
+  <script src="data/catalog.js"></script>
+  <script src="lib/parse.js"></script>
+  <script src="lib/planner.js"></script>
+  <script src="lib/pdf-extract.js"></script>
+  <script src="lib/store.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
