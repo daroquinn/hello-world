@@ -181,6 +181,7 @@
   }
   function openRecipe(id) {
     openId = id;
+    resetPdfView();
     renderDialog();
     $('#recipeDialog').showModal();
   }
@@ -373,11 +374,13 @@
   $('#pantryOnly').addEventListener('change', renderPrices);
   $('#includeOptional').addEventListener('change', async (e) => { state.includeOptional = e.target.checked; await savePrefs(); renderAll(); });
   $('#clearChecked').addEventListener('click', async () => { state.checked.clear(); await savePrefs(); renderList(); });
+  // Printing is blocked when the app runs inside another page (e.g. a hosted preview).
+  if (window.self !== window.top) $('#printList').hidden = true;
   $('#printList').addEventListener('click', () => { switchTab('list'); window.print(); });
   $('#copyList').addEventListener('click', async () => {
     const text = listAsText();
-    try { await navigator.clipboard.writeText(text); $('#copyList').textContent = 'Copied ✓'; }
-    catch (e) { window.prompt('Copy your list:', text); }
+    try { await navigator.clipboard.writeText(text); $('#copyList').textContent = 'Copied ✓'; $('#copyBox').hidden = true; }
+    catch (e) { $('#copyText').value = text; $('#copyBox').hidden = false; $('#copyText').select(); }
     setTimeout(() => { $('#copyList').textContent = 'Copy as text'; }, 1500);
   });
 
@@ -391,14 +394,37 @@
     await saveOpen(); renderDialog();
   });
   $('#dNewLine').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#dAddLine').click(); } });
+  // Show the original PDF inside the dialog (works even where new windows are blocked).
+  function resetPdfView() { $('#dPdf').innerHTML = ''; $('#dViewPdf').textContent = 'Show original PDF'; }
   $('#dViewPdf').addEventListener('click', async () => {
+    const box = $('#dPdf');
+    if (box.childElementCount) { resetPdfView(); return; }
     const f = await S.get('files', openId);
-    if (!f) { alert('The original PDF is not stored for this recipe (it may have come from a backup).'); return; }
-    window.open(URL.createObjectURL(f.blob), '_blank');
+    if (!f) { box.innerHTML = '<p class="hint">The original PDF isn\'t stored for this recipe. Recipes restored from a backup don\'t include it.</p>'; return; }
+    $('#dViewPdf').textContent = 'Hide original PDF';
+    try {
+      const pdfjs = await loadPdfjs();
+      const doc = await pdfjs.getDocument({ data: new Uint8Array(await f.blob.arrayBuffer()) }).promise;
+      for (let i = 1; i <= doc.numPages; i++) {
+        const page = await doc.getPage(i);
+        const vp = page.getViewport({ scale: 1.5 });
+        const c = document.createElement('canvas');
+        c.width = vp.width; c.height = vp.height;
+        box.appendChild(c);
+        await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+      }
+    } catch (e) { box.innerHTML = '<p class="warn">This PDF couldn\'t be displayed. The PDF reader needs an internet connection.</p>'; }
   });
+  let deleteArmed = null;
   $('#dDelete').addEventListener('click', async () => {
     const r = state.recipes.find((x) => x.id === openId);
-    if (!confirm(`Delete “${r.title}”? This can't be undone.`)) return;
+    const btn = $('#dDelete');
+    if (!deleteArmed) {
+      btn.textContent = 'Click again to delete';
+      deleteArmed = setTimeout(() => { deleteArmed = null; btn.textContent = 'Delete recipe'; }, 4000);
+      return;
+    }
+    clearTimeout(deleteArmed); deleteArmed = null; btn.textContent = 'Delete recipe';
     await S.del('recipes', r.id); await S.del('files', r.id);
     state.recipes = state.recipes.filter((x) => x.id !== r.id);
     state.plan = state.plan.filter((p) => p.recipeId !== r.id);
@@ -423,22 +449,30 @@
   // backup / restore (recipes + settings; PDFs themselves are not included)
   $('#exportData').addEventListener('click', () => {
     const data = { version: 1, exportedAt: new Date().toISOString(), recipes: state.recipes, plan: state.plan, pantry: [...state.pantry], overrides: state.overrides, custom: state.custom };
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+    const json = JSON.stringify(data);
+    $('#backupText').value = json;
+    const a = $('#downloadBackup');
+    a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
     a.download = `meal-planner-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
+    $('#backupBox').hidden = false;
   });
+  $('#copyBackup').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText($('#backupText').value); $('#copyBackup').textContent = 'Copied ✓'; }
+    catch (e) { $('#backupText').select(); $('#copyBackup').textContent = 'Press Ctrl/Cmd+C to copy'; }
+    setTimeout(() => { $('#copyBackup').textContent = 'Copy backup'; }, 2500);
+  });
+  $('#closeBackup').addEventListener('click', () => { $('#backupBox').hidden = true; });
   $('#importData').addEventListener('change', async (e) => {
     const file = e.target.files[0]; if (!file) return;
     try {
       const data = JSON.parse(await file.text());
       if (!Array.isArray(data.recipes)) throw new Error('not a Meal Planner backup');
-      if (!confirm(`Restore ${data.recipes.length} recipes and your settings? Recipes with the same ID are replaced.`)) return;
       for (const r of data.recipes) { await S.put('recipes', r); }
       state.recipes = await S.all('recipes');
       state.plan = data.plan || []; state.pantry = new Set(data.pantry || []); state.overrides = data.overrides || {}; state.custom = data.custom || [];
       rebuildCatalog(); await savePrefs(); renderAll();
-    } catch (err) { alert('Could not restore: ' + err.message); }
+      $('#dataStatus').textContent = `Restored ${data.recipes.length} recipes and your settings.`;
+    } catch (err) { $('#dataStatus').innerHTML = `<span class="warn">That file couldn't be restored: ${esc(err.message)}. Choose a backup saved from this app.</span>`; }
     e.target.value = '';
   });
 

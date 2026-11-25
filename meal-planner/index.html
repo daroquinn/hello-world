@@ -64,6 +64,10 @@
         <button id="printList" class="btn">Print</button>
         <button id="clearChecked" class="btn ghost">Uncheck all</button>
       </div>
+      <div id="copyBox" hidden>
+        <p class="hint">Copying isn't allowed here. Select the text below and copy it yourself.</p>
+        <textarea id="copyText" rows="8" readonly></textarea>
+      </div>
       <div id="shoppingList"></div>
     </section>
 
@@ -79,6 +83,12 @@
         <span class="spacer"></span>
         <button id="exportData" class="btn">Back up data</button>
         <label class="btn">Restore backup<input type="file" id="importData" accept="application/json" hidden></label>
+      </div>
+      <div id="dataStatus" class="status" aria-live="polite"></div>
+      <div id="backupBox" hidden>
+        <p class="hint">Your backup is below. Copy it and save it somewhere safe, or download it as a file. To restore it, use <em>Restore backup</em> and choose the saved file.</p>
+        <textarea id="backupText" rows="6" readonly></textarea>
+        <div class="toolbar"><button id="copyBackup" class="btn">Copy backup</button><a id="downloadBackup" class="btn" download="meal-planner-backup.json">Download file</a><button id="closeBackup" class="btn ghost">Close</button></div>
       </div>
       <div id="priceTable"></div>
       <details class="addItem">
@@ -111,11 +121,12 @@
       <label>Serves <input id="dServings" type="number" min="1" step="1"></label>
       <span id="dFile" class="hint"></span>
       <span class="spacer"></span>
-      <button id="dViewPdf" class="btn">Open PDF</button>
+      <button id="dViewPdf" class="btn">Show original PDF</button>
       <button id="dDelete" class="btn danger">Delete recipe</button>
     </div>
     <p class="hint">Check what was read from the PDF. Fix the text, pick the right store item, or remove a line. Changes save automatically.</p>
     <div id="dIngredients"></div>
+    <div id="dPdf" class="pdf-box"></div>
     <div class="row-add">
       <input id="dNewLine" placeholder="Add an ingredient, e.g. 2 cups baby spinach">
       <button id="dAddLine" class="btn">Add</button>
