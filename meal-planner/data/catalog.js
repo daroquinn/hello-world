@@ -25,8 +25,10 @@
 (function (root) {
   const C = [];
   const add = (o) => C.push(o);
-  const spice = (id, name, aliases, jarG, price, tspG, extra = {}) =>
-    add({ id, name, cat: 'Spices', base: 'g', pkg: { size: jarG, label: `${(jarG / 28.35).toFixed(1)} oz jar`, price }, conv: { tsp: tspG }, aliases, dflt: tspG, ...extra });
+  // Spices are priced as H-E-B self-weigh bulk bins: price is per lb, and you scoop
+  // only what you need (with a small minimum scoop), so there are no leftover jars.
+  const spice = (id, name, aliases, perLb, tspG, extra = {}) =>
+    add({ id, name, cat: 'Spices', base: 'g', sold: 'weight', minBuy: 5, pkg: { size: 454, label: 'per lb (self-weigh bulk)', price: perLb }, conv: { tsp: tspG }, aliases, dflt: tspG, ...extra });
 
   // ---------- Produce ----------
   add({ id: 'beets', name: 'Beets', cat: 'Produce', base: 'g', sold: 'weight', pkg: { size: 454, label: 'per lb (loose)', price: 1.48 }, conv: { each: 150 }, aliases: ['beetroot', 'beets', 'beet', 'golden beets'] });
@@ -95,7 +97,7 @@
   add({ id: 'coconut_oil', name: 'Coconut oil', cat: 'Pantry', base: 'ml', pkg: { size: 414, label: '14 oz jar', price: 5.98 }, aliases: ['coconut oil'] });
   add({ id: 'sesame_oil', name: 'Toasted sesame oil', cat: 'International', base: 'ml', pkg: { size: 148, label: '5 oz bottle', price: 3.98 }, aliases: ['sesame oil', 'toasted sesame oil'] });
   add({ id: 'salt', name: 'Salt', cat: 'Spices', base: 'g', pkg: { size: 737, label: '26 oz canister', price: 0.88 }, conv: { tsp: 5.7, pinch: 0.4 }, aliases: ['salt', 'sea salt', 'kosher salt', 'table salt', 'fine sea salt'], staple: true, dflt: 3 });
-  add({ id: 'black_pepper', name: 'Black pepper', cat: 'Spices', base: 'g', pkg: { size: 113, label: '4 oz grinder', price: 3.98 }, conv: { tsp: 2.3, pinch: 0.2 }, aliases: ['black pepper', 'pepper', 'ground pepper', 'ground black pepper', 'freshly ground black pepper'], staple: true, dflt: 1 });
+  add({ id: 'black_pepper', name: 'Black pepper', cat: 'Spices', base: 'g', sold: 'weight', minBuy: 5, pkg: { size: 454, label: 'per lb (self-weigh bulk)', price: 15.99 }, conv: { tsp: 2.3, pinch: 0.2 }, aliases: ['black pepper', 'pepper', 'ground pepper', 'ground black pepper', 'freshly ground black pepper'], staple: true, dflt: 1 });
   add({ id: 'basmati', name: 'Basmati rice', cat: 'Pantry', base: 'g', pkg: { size: 907, label: '2 lb bag', price: 4.48 }, conv: { cup: 195 }, aliases: ['basmati rice', 'basmati'] });
   add({ id: 'arborio', name: 'Arborio rice', cat: 'Pantry', base: 'g', pkg: { size: 454, label: '1 lb box', price: 3.48 }, conv: { cup: 200 }, aliases: ['arborio rice', 'arborio', 'risotto rice'] });
   add({ id: 'white_rice', name: 'Jasmine / white rice', cat: 'Pantry', base: 'g', pkg: { size: 907, label: '2 lb bag', price: 3.28 }, conv: { cup: 185 }, aliases: ['cooked rice', 'white rice', 'jasmine rice', 'steamed rice', 'rice'], dflt: 300 });
@@ -140,29 +142,31 @@
   add({ id: 'coconut_flakes', name: 'Unsweetened coconut flakes', cat: 'Baking', base: 'g', pkg: { size: 198, label: '7 oz bag', price: 3.98 }, conv: { cup: 60 }, aliases: ['unsweetened flake coconut', 'flake coconut', 'coconut flakes', 'shredded coconut', 'unsweetened coconut'] });
 
   // ---------- Spices ----------
-  spice('turmeric', 'Ground turmeric', ['ground turmeric', 'turmeric'], 60, 3.48, 3);
-  spice('garam_masala', 'Garam masala', ['garam masala'], 50, 4.48, 2.5);
-  spice('curry_powder', 'Curry powder', ['curry powder'], 50, 3.98, 2.5);
-  spice('cayenne', 'Cayenne / chili powder', ['cayenne', 'cayenne pepper', 'chili powder', 'cayenne or chili powder'], 50, 3.48, 2);
-  spice('cumin_seeds', 'Cumin seeds', ['cumin seeds', 'cumin seed', 'whole cumin'], 50, 3.98, 2.1);
-  spice('ground_cumin', 'Ground cumin', ['ground cumin', 'cumin'], 50, 3.48, 2.3);
-  spice('ground_coriander', 'Ground coriander', ['ground coriander', 'coriander powder'], 40, 3.48, 1.8);
-  spice('amchur', 'Amchur (dried mango powder)', ['amchur', 'amchur powder', 'amchoor', 'dried mango powder'], 100, 3.99, 2.5, { note: 'Rarely at H-E-B. Indian grocer.' });
-  spice('five_spice', 'Chinese five spice', ['five spice powder', 'chinese five spice', 'five spice', 'five-spice powder'], 50, 3.98, 2);
-  spice('paprika', 'Paprika', ['paprika', 'smoked paprika', 'sweet paprika'], 60, 2.98, 2.3);
-  spice('celery_seed', 'Celery seed', ['celery seed', 'celery seeds'], 50, 3.98, 2);
-  spice('nutmeg', 'Nutmeg', ['nutmeg', 'ground nutmeg', 'freshly grated nutmeg'], 50, 4.98, 2.2);
-  spice('thyme', 'Dried thyme', ['dried thyme', 'thyme'], 20, 2.98, 1);
-  spice('italian_seasoning', 'Italian seasoning', ['italian seasoning'], 20, 2.98, 1);
-  spice('cinnamon', 'Ground cinnamon', ['ground cinnamon', 'cinnamon'], 70, 2.98, 2.6);
-  spice('fennel_seeds', 'Fennel seeds', ['fennel seeds', 'fennel seed'], 40, 3.48, 2);
-  spice('poppy_seeds', 'Poppy seeds', ['poppy seeds'], 60, 4.48, 2.8);
-  spice('sesame_seeds', 'Sesame seeds', ['sesame seeds', 'white sesame seeds', 'toasted white sesame seeds', 'roasted sesame seeds', 'toasted sesame seeds'], 100, 2.98, 3, { cat: 'International' });
-  spice('onion_powder', 'Onion powder', ['onion powder'], 60, 2.98, 2.4);
-  spice('msg', 'MSG', ['msg', 'accent seasoning'], 113, 2.48, 4);
-  spice('red_pepper_flakes', 'Crushed red pepper flakes', ['red pepper flakes', 'red pepper flake', 'red-pepper flakes', 'crushed red pepper', 'crushed red pepper flake', 'crush red pepper', 'chili flakes', 'red pepper/chili flakes'], 40, 2.98, 1.8);
-  add({ id: 'dried_chilies', name: 'Dried red chilies', cat: 'Spices', base: 'each', unitLabel: 'chilies', pkg: { size: 40, label: '1 oz bag (~40)', price: 2.49 }, aliases: ['dried red chilies', 'dried red chili', 'dried chilies', 'chiles de arbol'] });
-  add({ id: 'cardamom', name: 'Green cardamom pods', cat: 'Spices', base: 'each', unitLabel: 'pods', pkg: { size: 60, label: '1.5 oz jar (~60 pods)', price: 6.98 }, conv: { pod: 1 }, aliases: ['cardamom pods', 'green cardamom', 'cardamom'] });
+  // Estimated bulk prices per lb. Not verified against the Riverside Dr store's bulk aisle.
+  spice('turmeric', 'Ground turmeric', ['ground turmeric', 'turmeric'], 9.99, 3);
+  spice('garam_masala', 'Garam masala', ['garam masala'], 14.99, 2.5);
+  spice('curry_powder', 'Curry powder', ['curry powder'], 12.99, 2.5);
+  spice('cayenne', 'Cayenne / chili powder', ['cayenne', 'cayenne pepper', 'chili powder', 'cayenne or chili powder'], 10.99, 2);
+  spice('cumin_seeds', 'Cumin seeds', ['cumin seeds', 'cumin seed', 'whole cumin'], 9.99, 2.1);
+  spice('ground_cumin', 'Ground cumin', ['ground cumin', 'cumin'], 10.99, 2.3);
+  spice('ground_coriander', 'Ground coriander', ['ground coriander', 'coriander powder'], 8.99, 1.8);
+  spice('five_spice', 'Chinese five spice', ['five spice powder', 'chinese five spice', 'five spice', 'five-spice powder'], 14.99, 2);
+  spice('paprika', 'Paprika', ['paprika', 'smoked paprika', 'sweet paprika'], 10.99, 2.3);
+  spice('celery_seed', 'Celery seed', ['celery seed', 'celery seeds'], 9.99, 2);
+  spice('nutmeg', 'Nutmeg', ['nutmeg', 'ground nutmeg', 'freshly grated nutmeg'], 19.99, 2.2);
+  spice('thyme', 'Dried thyme', ['dried thyme', 'thyme'], 14.99, 1);
+  spice('italian_seasoning', 'Italian seasoning', ['italian seasoning'], 14.99, 1);
+  spice('cinnamon', 'Ground cinnamon', ['ground cinnamon', 'cinnamon'], 8.99, 2.6);
+  spice('fennel_seeds', 'Fennel seeds', ['fennel seeds', 'fennel seed'], 9.99, 2);
+  spice('poppy_seeds', 'Poppy seeds', ['poppy seeds'], 10.99, 2.8);
+  spice('sesame_seeds', 'Sesame seeds', ['sesame seeds', 'white sesame seeds', 'toasted white sesame seeds', 'roasted sesame seeds', 'toasted sesame seeds'], 6.99, 3);
+  spice('onion_powder', 'Onion powder', ['onion powder'], 8.99, 2.4);
+  spice('red_pepper_flakes', 'Crushed red pepper flakes', ['red pepper flakes', 'red pepper flake', 'red-pepper flakes', 'crushed red pepper', 'crushed red pepper flake', 'crush red pepper', 'chili flakes', 'red pepper/chili flakes'], 9.99, 1.8);
+  spice('dried_chilies', 'Dried red chilies', ['dried red chilies', 'dried red chili', 'dried chilies', 'chiles de arbol'], 11.99, 1, { conv: { each: 0.5 } });
+  spice('cardamom', 'Green cardamom pods', ['cardamom pods', 'green cardamom', 'cardamom'], 39.99, 2, { conv: { pod: 0.2, each: 0.2 }, dflt: 1 });
+  // Usually not in bulk bins, so priced as packaged:
+  add({ id: 'amchur', name: 'Amchur (dried mango powder)', cat: 'Spices', base: 'g', pkg: { size: 100, label: '3.5 oz bag', price: 3.99 }, conv: { tsp: 2.5 }, aliases: ['amchur', 'amchur powder', 'amchoor', 'dried mango powder'], dflt: 2.5, note: 'Rarely at H-E-B. Indian grocer.' });
+  add({ id: 'msg', name: 'MSG', cat: 'Spices', base: 'g', pkg: { size: 113, label: '4 oz shaker', price: 2.48 }, conv: { tsp: 4 }, aliases: ['msg', 'accent seasoning'], dflt: 4 });
 
   const SECTION_PERISH = { Produce: 1, 'Dairy & Eggs': 0.8, Refrigerated: 1, Frozen: 0.3, Pantry: 0.15, International: 0.15, Baking: 0.1, Spices: 0.05, Snacks: 0.2, Other: 0.5 };
   const SECTION_ORDER = ['Produce', 'Refrigerated', 'Dairy & Eggs', 'Frozen', 'Pantry', 'International', 'Baking', 'Spices', 'Snacks', 'Other'];

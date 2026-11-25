@@ -32,6 +32,7 @@ For each recipe you haven't planned, the app adds up how much of your leftovers 
   `npm i pdfjs-dist@4.10.38 && node tests/parse-pdfs.js path/to/pdfs`
 
 ## Known limits
+- **Spices are priced as self-weigh bulk** (per lb), so the list buys only what the recipes need (at least a 5 g scoop) instead of a whole jar. MSG and amchur aren't usually in bulk bins, so they're priced as packages. I can't confirm which spices the Riverside Dr store has in bulk. Change any of them in *Prices & pantry*.
 - **Prices are estimates, not live H-E-B data.** H-E-B has no public API for prices or store inventory, and heb.com blocks automated access. The app can't tell whether the Riverside Dr store has something in stock. The *H-E-B ↗* links open a heb.com search, where you can check the real price for your store.
 - **Reading ingredients from PDFs is heuristic.** It was tested on 19 recipes in several layouts: single-column, NYT Cooking two-column, King Arthur three-column, blog printouts and Milk Street. Check new uploads with **Review**. Known misses:
   - the banana bread's topping, which sits on a separate printed half-page
