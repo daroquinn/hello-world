@@ -41,6 +41,17 @@
     if (ing.free) return null;
     return state.match(ing);
   }
+  // ---------- In season (Texas), by the half-month you're using the app in ----------
+  const SEA = window.MP_SEASONS;
+  let period = SEA.periodFor(new Date());
+  const isInSeason = (item) => !!item && SEA.inSeason(item.id, period);
+  const seasonTag = (item) => (isInSeason(item) ? `<span class="season" title="In season in Texas in ${SEA.periodName(period).replace(/^\w/, (c) => c.toLowerCase())}">In season</span>` : '');
+  function renderSeasonNow() {
+    $('#seasonNow').textContent = `In-season tags are for ${SEA.periodName(period).replace(/^\w/, (c) => c.toLowerCase())} in Texas.`;
+  }
+  // If the app stays open across midnight into a new half-month, refresh the tags.
+  setInterval(() => { const p = SEA.periodFor(new Date()); if (p !== period) { period = p; renderSeasonNow(); renderAll(); } }, 10 * 60 * 1000);
+
   const opts = () => ({ pantry: state.pantry, includeOptional: state.includeOptional, match: state.match });
 
   async function savePrefs() {
@@ -305,9 +316,11 @@
       const ings = r.ingredients.filter((i) => !i.header && !i.removed);
       const unmatched = ings.filter((i) => !itemFor(i) && i.itemId !== '__none' && !i.free).length;
       const planned = inPlan.has(r.id);
+      const seasonal = [...new Set(ings.map(itemFor).filter(isInSeason).map((it) => it.name))];
       return `<article class="card ${planned ? 'inplan' : ''}">
         <h4 data-open="${r.id}">${highlight(r.title, tokens)}</h4>
         <div class="meta">${r.servings ? `Serves ${r.servings} · ` : ''}${ings.length} ingredients${unmatched ? ` · <span class="warn">${unmatched} need a store item</span>` : ''}${r.missing ? ` · <span class="warn" title="${esc(r.sourceFolder + '/' + r.sourcePath)}">file missing from folder</span>` : ''}${!ings.length ? ' · <span class="warn">no ingredients yet</span>' : r.ocr ? ' · <span class="small">read from a scan, check it</span>' : ''}</div>
+        ${seasonal.length ? `<div class="meta"><span class="season" style="margin-left:0">${seasonal.length} in season</span> <span class="small">${esc(seasonal.join(', '))}</span></div>` : ''}
         <div class="actions">
           ${planned ? `<button class="btn small" data-unplan="${r.id}">✓ In plan, remove</button>` : `<button class="btn small primary" data-plan="${r.id}">Add to plan</button>`}
           <button class="btn small" data-open="${r.id}">Review</button>
@@ -343,7 +356,7 @@
       else amt = '<span class="small">not bought</span>';
       return `<tr>
         <td><input class="raw" data-raw="${idx}" value="${esc(ing.raw)}"></td>
-        <td><select data-item="${idx}">${itemOptions(ing.itemId, auto)}</select></td>
+        <td><select data-item="${idx}">${itemOptions(ing.itemId, auto)}</select>${seasonTag(item)}</td>
         <td class="num">${amt}</td>
         <td><label class="check" title="Optional ingredient"><input type="checkbox" data-opt="${idx}" ${ing.optional ? 'checked' : ''}> optional</label></td>
         <td><button class="btn small ghost" data-rm="${idx}" title="Remove">✕</button></td>
@@ -403,6 +416,7 @@
         : sug.map((s) => `<div class="sugg">
           <h4>${esc(s.recipe.title)}</h4>
           <div class="uses">Uses up ${s.uses.slice(0, 5).map((u) => `<b>${esc(u.item.name.toLowerCase())}</b> (${esc(PL.fmtAmount(u.used, u.item))})`).join(', ')}${s.uses.length > 5 ? ` and ${s.uses.length - 5} more` : ''}.</div>
+          ${(() => { const names = [...new Set(s.recipe.ingredients.filter((g) => !g.header && !g.removed).map(itemFor).filter(isInSeason).map((it) => it.name))]; return names.length ? `<div class="uses"><span class="season" style="margin-left:0">${names.length} in season</span> ${esc(names.join(', '))}</div>` : ''; })()}
           <div class="toolbar" style="margin:0">
             <span class="small">Adds ~${money(s.extraFresh)} of fresh food${s.extraPantry > 0.01 ? ` + ${money(s.extraPantry)} pantry/spices you may already have` : ''} · uses ~${money(s.uses.reduce((a, u) => a + u.value, 0))} of leftovers</span>
             <span class="spacer"></span>
@@ -433,7 +447,7 @@
         const uses = l.uses.map((u) => `${u.recipe}: ${u.raw}`).join('\n');
         html += `<tr class="${done ? 'done' : ''}">
           <td><input type="checkbox" data-got="${l.item.id}" ${done ? 'checked' : ''} aria-label="Got it"></td>
-          <td><span class="iname" title="${esc(uses)}">${esc(l.item.name)}</span>${l.item.note ? `<div class="small warn">${esc(l.item.note)}</div>` : ''}<div class="small">${l.uses.map((u) => esc(u.recipe)).filter((v, i, a) => a.indexOf(v) === i).join(' · ')}</div></td>
+          <td><span class="iname" title="${esc(uses)}">${esc(l.item.name)}</span>${seasonTag(l.item)}${l.item.note ? `<div class="small warn">${esc(l.item.note)}</div>` : ''}<div class="small">${l.uses.map((u) => esc(u.recipe)).filter((v, i, a) => a.indexOf(v) === i).join(' · ')}</div></td>
           <td class="hide-sm">${l.unquantified && !l.amount ? '<span class="small">some</span>' : esc(PL.fmtAmount(l.amount, l.item))}${l.approx ? ' <span class="small" title="Includes an estimated conversion">≈</span>' : ''}</td>
           <td>${buyLabel(l)}</td>
           <td class="num">${l.have ? '' : money(l.cost)}</td>
@@ -466,8 +480,9 @@
   function renderPrices() {
     const q = P.fold($('#priceSearch').value);
     const onlyPantry = $('#pantryOnly').checked;
+    const onlySeason = $('#seasonOnly').checked;
     const items = state.catalog
-      .filter((i) => (!q || P.fold(i.name + ' ' + (i.aliases || []).join(' ')).includes(q)) && (!onlyPantry || state.pantry.has(i.id)))
+      .filter((i) => (!q || P.fold(i.name + ' ' + (i.aliases || []).join(' ')).includes(q)) && (!onlyPantry || state.pantry.has(i.id)) && (!onlySeason || isInSeason(i)))
       .sort((a, b) => (SECTION_ORDER.indexOf(a.cat) - SECTION_ORDER.indexOf(b.cat)) || a.name.localeCompare(b.name));
     $('#priceTable').innerHTML = `<div class="table-wrap"><table><thead><tr><th>Have</th><th>Item</th><th class="hide-sm">Section</th><th>Package</th><th class="num">Price</th><th></th></tr></thead><tbody>
       ${items.map((i) => {
@@ -475,7 +490,7 @@
         const edited = !!state.overrides[i.id];
         return `<tr>
           <td><input type="checkbox" data-pantry="${i.id}" ${state.pantry.has(i.id) ? 'checked' : ''} aria-label="I have this at home"></td>
-          <td><span class="iname">${esc(i.name)}</span>${i.note ? `<div class="small warn">${esc(i.note)}</div>` : ''}${i.sold === 'weight' ? '<div class="small">sold by weight</div>' : ''}</td>
+          <td><span class="iname">${esc(i.name)}</span>${seasonTag(i)}${i.note ? `<div class="small warn">${esc(i.note)}</div>` : ''}${i.sold === 'weight' ? '<div class="small">sold by weight</div>' : ''}</td>
           <td class="hide-sm small">${esc(i.cat)}</td>
           <td><input class="label-input" data-label="${i.id}" value="${esc(i.pkg.label)}" aria-label="Package description"></td>
           <td class="num">$<input class="price-input" type="number" step="0.01" min="0" data-price="${i.id}" value="${i.pkg.price.toFixed(2)}" aria-label="Price"></td>
@@ -579,6 +594,7 @@
   $('#searchIngredients').addEventListener('change', renderRecipes);
   $('#priceSearch').addEventListener('input', renderPrices);
   $('#pantryOnly').addEventListener('change', renderPrices);
+  $('#seasonOnly').addEventListener('change', renderPrices);
   $('#includeOptional').addEventListener('change', async (e) => { state.includeOptional = e.target.checked; await savePrefs(); renderAll(); });
   $('#clearChecked').addEventListener('click', async () => { state.checked.clear(); await savePrefs(); renderList(); });
   // Printing is blocked when the app runs inside another page (e.g. a hosted preview).
@@ -742,6 +758,7 @@
     let tab = 'recipes';
     try { tab = localStorage.getItem('mp-tab') || tab; } catch (e) { /* ignore */ }
     switchTab(tab);
+    renderSeasonNow();
     renderAll();
     renderFolderBar();
     if (state.folder) scanFolder(false); // checks right away if the browser still allows it, otherwise shows Reconnect

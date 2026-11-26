@@ -10,7 +10,7 @@
   <header class="top">
     <div class="brand">
       <h1>Meal Planner</h1>
-      <p class="sub">Prices are estimates for H-E-B Riverside Dr, Austin. <a href="#" data-tab="prices">Edit them</a>.</p>
+      <p class="sub">Prices are estimates for H-E-B Riverside Dr, Austin. <a href="#" data-tab="prices">Edit them</a>. <span id="seasonNow"></span></p>
     </div>
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="recipes" class="active">Recipes</button>
@@ -89,6 +89,7 @@
       <div class="toolbar">
         <input type="search" id="priceSearch" placeholder="Filter items…">
         <label class="check"><input type="checkbox" id="pantryOnly"> only items I have at home</label>
+        <label class="check"><input type="checkbox" id="seasonOnly"> only produce in season now</label>
         <span class="spacer"></span>
         <button id="exportData" class="btn">Back up data</button>
         <label class="btn">Restore backup<input type="file" id="importData" accept="application/json" hidden></label>
@@ -147,6 +148,7 @@
   <template id="tplEmpty"><div class="empty"></div></template>
 
   <script src="data/catalog.js"></script>
+  <script src="data/seasons-tx.js"></script>
   <script src="lib/parse.js"></script>
   <script src="lib/planner.js"></script>
   <script src="lib/pdf-extract.js"></script>
