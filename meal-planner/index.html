@@ -24,9 +24,9 @@
     <!-- RECIPES -->
     <section id="tab-recipes" class="tab active">
       <label class="drop" id="drop">
-        <input type="file" id="fileInput" accept="application/pdf,.pdf" multiple hidden>
-        <strong>Upload recipe PDFs</strong>
-        <span>Drop files here or click to choose. You can add several at once.</span>
+        <input type="file" id="fileInput" accept="application/pdf,.pdf,image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" multiple hidden>
+        <strong>Upload recipe PDFs or screenshots</strong>
+        <span>PDF, PNG, JPG or WebP. Drop files here or click to choose. You can add several at once.</span>
       </label>
       <div class="folderbar">
         <p id="folderInfo"></p>
@@ -131,8 +131,8 @@
       <label>Serves <input id="dServings" type="number" min="1" step="1"></label>
       <span id="dFile" class="hint"></span>
       <span class="spacer"></span>
-      <button id="dViewPdf" class="btn">Show original PDF</button>
-      <button id="dReread" class="btn">Read PDF again</button>
+      <button id="dViewPdf" class="btn">Show original</button>
+      <button id="dReread" class="btn">Read file again</button>
       <button id="dDelete" class="btn danger">Delete recipe</button>
     </div>
     <p class="hint">Check what was read from the PDF. Fix the text, pick the right store item, or remove a line. Changes save automatically.</p>

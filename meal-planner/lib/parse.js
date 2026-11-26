@@ -259,7 +259,7 @@
   function cleanFilename(fn) {
     const name = String(fn || '')
       .replace(/^.*[\\/]/, '')
-      .replace(/\.pdf$/i, '')
+      .replace(/\.(pdf|png|jpe?g|webp)$/i, '')
       .replace(/^[0-9a-f]{8}-(?=.)/, '')
       .replace(/_+/g, ' ')
       .replace(/\s+/g, ' ')

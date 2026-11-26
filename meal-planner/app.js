@@ -121,22 +121,92 @@
       const ctx = canvas.getContext('2d');
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
-      const { data } = await worker.recognize(canvas, {}, { blocks: true, text: true });
-      const H = canvas.height;
-      const items = [];
-      for (const block of data.blocks || []) for (const par of block.paragraphs || []) for (const line of par.lines || []) {
-        const lh = line.bbox.y1 - line.bbox.y0;
-        const y = (H - line.bbox.y1) / scale;
-        const size = Math.max(4, (lh * 0.8) / scale);
-        for (const w of line.words || []) {
-          const t = (w.text || '').trim();
-          if (!t) continue;
-          items.push({ str: t, x: w.bbox.x0 / scale, y, w: (w.bbox.x1 - w.bbox.x0) / scale, size });
-        }
-      }
-      out.push(...window.MP_PDF.groupItems(items, p));
+      out.push(...(await recognizeCanvas(worker, canvas, scale, p)));
     }
     return out;
+  }
+
+  // OCR one canvas. `scale` converts canvas pixels to PDF points (72 per inch),
+  // the units the recipe parser's layout rules expect.
+  async function recognizeCanvas(worker, canvas, scale, pageNo) {
+    const { data } = await worker.recognize(canvas, {}, { blocks: true, text: true });
+    const H = canvas.height;
+    const items = [];
+    for (const block of data.blocks || []) for (const par of block.paragraphs || []) for (const line of par.lines || []) {
+      const lh = line.bbox.y1 - line.bbox.y0;
+      const y = (H - line.bbox.y1) / scale;
+      const size = Math.max(4, (lh * 0.8) / scale);
+      const words = (line.words || []).filter((w) => (w.text || '').trim());
+      const texts = fixOcrFractions(words.map((w) => w.text.trim()));
+      words.forEach((w, i) => {
+        if (texts[i]) items.push({ str: texts[i], x: w.bbox.x0 / scale, y, w: (w.bbox.x1 - w.bbox.x0) / scale, size });
+      });
+    }
+    return window.MP_PDF.groupItems(items, pageNo);
+  }
+
+  // Text recognition often misreads the fraction characters in recipes
+  // (½ as "%", "¥", "Y2" or a bare "2"; ¼ as "Y4" or '"4'; the digit 1 as "l").
+  // These rules fix the common cases in a line of recognised words.
+  const UNIT_WORD = /^(cups?|c\.|tablespoons?|tbsp|tbs|teaspoons?|tsp|pounds?|lbs?|ounces?|oz|inch(es)?|cloves?|sticks?|cans?)\b/i;
+  function fixOcrFractions(words) {
+    const out = words.slice();
+    for (let i = 0; i < out.length; i++) {
+      const w = out[i];
+      const next = out[i + 1] || '';
+      const prevNum = i > 0 && /^\d+$/.test(out[i - 1]);
+      if (/^(%|¥|Y2|V2|Va|%2|\/2|['"`]\/?2|y2|v2)$/.test(w)) out[i] = '1/2';
+      else if (/^(Y4|V4|%4|\/4|['"`]4|y4|v4)$/.test(w)) out[i] = '1/4';
+      else if (/^(3%|%4\/)$/.test(w)) out[i] = '3/4';
+      else if (w === '2' && prevNum && UNIT_WORD.test(next)) out[i] = '1/2'; // "1 2 cups" was "1 ½ cups"
+      else if (/^l$/.test(w) && (UNIT_WORD.test(next) || /^\(/.test(next))) out[i] = '1';
+      else if (/^l-inch/i.test(w)) out[i] = w.replace(/^l/, '1');
+    }
+    return out;
+  }
+
+  // ---------- Screenshots and photos (PNG, JPG, WebP) ----------
+  const IMAGE_RE = /\.(png|jpe?g|webp)$/i;
+  const isImage = (f) => /^image\/(png|jpeg|webp)$/i.test(f.type || '') || IMAGE_RE.test(f.name || '');
+  const isPdf = (f) => /pdf$/i.test(f.type || '') || /\.pdf$/i.test(f.name || '');
+  const fileType = (f) => (isImage(f) ? (f.type || 'image/png') : 'application/pdf');
+
+  async function ocrImage(blob, onStep) {
+    let bmp;
+    try { bmp = await createImageBitmap(blob); } catch (e) { throw new Error('this image format can\'t be opened by the browser'); }
+    // Small screenshots are enlarged: text recognition needs letters roughly 20+ pixels tall.
+    const up = bmp.width < 1600 ? Math.min(2.5, 2400 / bmp.width) : 1;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bmp.width * up); canvas.height = Math.round(bmp.height * up);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); // transparent PNGs
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    // Dark-mode screenshots (light text on a dark background) read better inverted.
+    const sample = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let lum = 0, n = 0;
+    for (let i = 0; i < sample.data.length; i += 4 * 97) { lum += 0.3 * sample.data[i] + 0.59 * sample.data[i + 1] + 0.11 * sample.data[i + 2]; n++; }
+    if (lum / n < 110) {
+      for (let i = 0; i < sample.data.length; i += 4) { sample.data[i] = 255 - sample.data[i]; sample.data[i + 1] = 255 - sample.data[i + 1]; sample.data[i + 2] = 255 - sample.data[i + 2]; }
+      ctx.putImageData(sample, 0, 0);
+    }
+    onStep();
+    const worker = await getOcrWorker();
+    // Treat the image as a page 612 points (8.5 in) wide.
+    return recognizeCanvas(worker, canvas, canvas.width / 612, 1);
+  }
+
+  // Read any supported file: PDFs use their text (or OCR if scanned); images always use OCR.
+  async function readFile(buf, name, type, status) {
+    if (!/^image\//.test(type)) return readPdf(buf, name, status);
+    if (!canOcr) return { lines: [], ocr: false, why: 'screenshots need text recognition, which only works in the downloaded app' };
+    try {
+      const lines = await ocrImage(new Blob([buf], { type }), () => status(`Reading ${name} with text recognition. This takes a few seconds…`));
+      return { lines, ocr: true, why: lines.length ? null : 'no readable text in this image' };
+    } catch (e) {
+      console.error(e);
+      return { lines: [], ocr: false, why: `text recognition failed (${e.message || e}). It needs an internet connection` };
+    }
   }
 
   // Read a PDF's text: the embedded text if there is any, otherwise OCR.
@@ -158,14 +228,13 @@
   async function importFiles(items, opt = {}) {
     const status = $('#uploadStatus');
     const all = [...items].map((x) => (x instanceof File ? { file: x, path: null, folder: null } : x));
-    const pdfs = all.filter(({ file: f }) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
+    const pdfs = all.filter(({ file: f }) => isPdf(f) || isImage(f));
     if (!pdfs.length) {
       if (opt.fromFolder) { status.textContent = `Checked ${opt.fromFolder}: no new recipes.`; renderAll(); }
-      else status.textContent = 'No PDF files were found there.';
+      else status.textContent = 'No PDFs or screenshots (PNG, JPG, WebP) were found there.';
       return;
     }
-    let pdfjs;
-    try { pdfjs = await loadPdfjs(); } catch (e) {
+    try { if (pdfs.some(({ file: f }) => isPdf(f))) await loadPdfjs(); } catch (e) {
       status.innerHTML = '<span class="warn">Could not load the PDF reader. It comes from cdn.jsdelivr.net, so you need an internet connection.</span>';
       return;
     }
@@ -184,7 +253,7 @@
       }
       try {
         const buf = await f.arrayBuffer();
-        const read = await readPdf(buf, f.name, (msg) => { status.textContent = `(${n + 1} of ${pdfs.length}) ${msg}`; });
+        const read = await readFile(buf, f.name, fileType(f), (msg) => { status.textContent = `(${n + 1} of ${pdfs.length}) ${msg}`; });
         // Keep the recipe even when no text could be read, so you can type its ingredients in.
         const parsed = read.lines.length ? P.parseRecipe(read.lines, f.name, state.match) : { title: P.cleanFilename(f.name), servings: null, ingredients: [], text: '' };
         if (read.why) problems.push(`${f.name}: ${read.why}`);
@@ -192,7 +261,7 @@
         const id = uid();
         const recipe = { id, filename: f.name, size: f.size, addedAt: Date.now(), title: parsed.title, pdfTitle: parsed.pdfTitle, servings: parsed.servings, ingredients: parsed.ingredients, text: parsed.text, ocr: read.ocr };
         if (path) { recipe.sourcePath = path; recipe.sourceFolder = folder; }
-        await S.put('files', { id, blob: new Blob([buf], { type: 'application/pdf' }) });
+        await S.put('files', { id, blob: new Blob([buf], { type: fileType(f) }) });
         await S.put('recipes', recipe);
         state.recipes.push(recipe);
         ok++;
@@ -204,7 +273,7 @@
     const where = opt.fromFolder ? `Checked ${opt.fromFolder}: ` : '';
     status.innerHTML = esc(where) + (ok ? `added ${ok} new recipe${ok === 1 ? '' : 's'}` : 'no new recipes').replace(/^./, (c) => (where ? c : c.toUpperCase()))
       + (skipped ? ` (${skipped} already imported)` : '') + '.'
-      + (scanned ? ` ${scanned} ${scanned === 1 ? 'was a scanned image' : 'were scanned images'} read with text recognition, so check ${scanned === 1 ? 'it' : 'them'} carefully.` : '')
+      + (scanned ? ` ${scanned} ${scanned === 1 ? 'was an image or scan' : 'were images or scans'} read with text recognition, so check ${scanned === 1 ? 'it' : 'them'} carefully.` : '')
       + (problems.length ? ` <span class="warn">${problems.map(esc).join('; ')}</span>` : '')
       + (ok ? ' Open a recipe to check its ingredients.' : '');
     renderAll();
@@ -220,7 +289,7 @@
     const out = [];
     for await (const [name, h] of dir.entries()) {
       if (name.startsWith('.')) continue;
-      if (h.kind === 'file' && /\.pdf$/i.test(name)) out.push({ handle: h, path: prefix + name });
+      if (h.kind === 'file' && (/\.pdf$/i.test(name) || IMAGE_RE.test(name))) out.push({ handle: h, path: prefix + name });
       else if (h.kind === 'directory') out.push(...(await listPdfs(h, prefix + name + '/')));
     }
     return out;
@@ -274,10 +343,10 @@
     $('#forgetFolder').hidden = !canRememberFolder || !h;
     if (!canRememberFolder) {
       info.innerHTML = window.self !== window.top
-        ? 'To link a recipes folder, download the app and open it in Vivaldi, Chrome or Edge. Here you can import a folder\'s PDFs one time.'
-        : 'This browser can\'t remember a folder. Use <em>Import a folder</em> to add every PDF in one.';
+        ? 'To link a recipes folder, download the app and open it in Vivaldi, Chrome or Edge. Here you can import a folder\'s PDFs and screenshots one time.'
+        : 'This browser can\'t remember a folder. Use <em>Import a folder</em> to add every PDF and screenshot in one.';
     } else if (!h) {
-      info.innerHTML = 'Link the folder where you keep recipe PDFs. New PDFs you save there are added when you open the app.';
+      info.innerHTML = 'Link the folder where you keep recipe PDFs and screenshots. New files you save there are added when you open the app.';
     } else if (folderNeedsPermission) {
       info.innerHTML = `Recipes folder: <strong>${esc(h.name)}</strong>. <span class="warn">Click <em>Reconnect folder</em> to let the app read it again.</span>`;
     } else {
@@ -310,7 +379,7 @@
         return tokens.every((t) => words.some((w) => w.startsWith(t)) || ingWords.some((w) => w.startsWith(t)));
       })
       .sort((a, b) => a.title.localeCompare(b.title));
-    if (!state.recipes.length) { el.innerHTML = '<div class="empty">No recipes yet. Upload some PDFs to get started.</div>'; return; }
+    if (!state.recipes.length) { el.innerHTML = '<div class="empty">No recipes yet. Upload some PDFs or screenshots to get started.</div>'; return; }
     if (!list.length) { el.innerHTML = `<div class="empty">No recipe titles match “${esc($('#search').value)}”.</div>`; return; }
     el.innerHTML = list.map((r) => {
       const ings = r.ingredients.filter((i) => !i.header && !i.removed);
@@ -342,7 +411,7 @@
     if (!r) return;
     $('#dTitle').value = r.title;
     $('#dServings').value = r.servings || '';
-    $('#dFile').textContent = r.pdfTitle && P.fold(r.pdfTitle) !== P.fold(r.title) ? `File: ${r.filename} · Heading in the PDF: ${r.pdfTitle}` : `File: ${r.filename}`;
+    $('#dFile').textContent = r.pdfTitle && P.fold(r.pdfTitle) !== P.fold(r.title) ? `File: ${r.filename} · Heading in the file: ${r.pdfTitle}` : `File: ${r.filename}`;
     const rows = r.ingredients.map((ing, idx) => {
       if (ing.removed) return '';
       if (ing.header) return `<tr class="hdr"><td colspan="4">${esc(ing.raw)}</td><td><button class="btn small ghost" data-rm="${idx}" title="Remove">✕</button></td></tr>`;
@@ -374,7 +443,7 @@
     resetPdfView();
     const rec = state.recipes.find((x) => x.id === id);
     $('#dNote').innerHTML = rec && !rec.ingredients.length
-      ? '<span class="warn">No ingredients were read from this PDF.</span> Type them in below, or use <em>Show original PDF</em> to see the page.'
+      ? '<span class="warn">No ingredients were read from this file.</span> Type them in below, or use <em>Show original</em> to see it.'
       : rec && rec.ocr ? 'This recipe was read from a scanned image with text recognition. Compare it with the original, since some words or numbers may be misread.' : '';
     renderDialog();
     $('#recipeDialog').showModal();
@@ -618,13 +687,20 @@
   });
   $('#dNewLine').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#dAddLine').click(); } });
   // Show the original PDF inside the dialog (works even where new windows are blocked).
-  function resetPdfView() { $('#dPdf').innerHTML = ''; $('#dViewPdf').textContent = 'Show original PDF'; }
+  function resetPdfView() { $('#dPdf').innerHTML = ''; $('#dViewPdf').textContent = 'Show original'; }
   $('#dViewPdf').addEventListener('click', async () => {
     const box = $('#dPdf');
     if (box.childElementCount) { resetPdfView(); return; }
     const f = await S.get('files', openId);
-    if (!f) { box.innerHTML = '<p class="hint">The original PDF isn\'t stored for this recipe. Recipes restored from a backup don\'t include it.</p>'; return; }
-    $('#dViewPdf').textContent = 'Hide original PDF';
+    if (!f) { box.innerHTML = '<p class="hint">The original file isn\'t stored for this recipe. Recipes restored from a backup don\'t include it.</p>'; return; }
+    $('#dViewPdf').textContent = 'Hide original';
+    if (/^image\//.test(f.blob.type)) {
+      const img = document.createElement('img');
+      img.alt = 'Original screenshot';
+      img.src = URL.createObjectURL(f.blob);
+      box.appendChild(img);
+      return;
+    }
     try {
       const pdfjs = await loadPdfjs();
       const doc = await pdfjs.getDocument({ data: new Uint8Array(await f.blob.arrayBuffer()) }).promise;
@@ -645,16 +721,16 @@
     const r = state.recipes.find((x) => x.id === openId);
     if (!rereadArmed) {
       btn.textContent = 'Click again: replaces this list';
-      rereadArmed = setTimeout(() => { rereadArmed = null; btn.textContent = 'Read PDF again'; }, 4000);
+      rereadArmed = setTimeout(() => { rereadArmed = null; btn.textContent = 'Read file again'; }, 4000);
       return;
     }
     clearTimeout(rereadArmed); rereadArmed = null;
     const f = await S.get('files', r.id);
     const note = $('#dNote');
-    if (!f) { note.innerHTML = '<span class="warn">The original PDF isn\'t stored for this recipe, so it can\'t be read again.</span>'; btn.textContent = 'Read PDF again'; return; }
+    if (!f) { note.innerHTML = '<span class="warn">The original file isn\'t stored for this recipe, so it can\'t be read again.</span>'; btn.textContent = 'Read file again'; return; }
     btn.disabled = true; btn.textContent = 'Reading…';
     try {
-      const read = await readPdf(await f.blob.arrayBuffer(), r.filename, (msg) => { note.textContent = msg; });
+      const read = await readFile(await f.blob.arrayBuffer(), r.filename, f.blob.type || 'application/pdf', (msg) => { note.textContent = msg; });
       if (read.lines.length) {
         const parsed = P.parseRecipe(read.lines, r.filename, state.match);
         Object.assign(r, { pdfTitle: parsed.pdfTitle, servings: parsed.servings, ingredients: parsed.ingredients, text: parsed.text, ocr: read.ocr });
@@ -662,8 +738,8 @@
         note.textContent = `Read ${parsed.ingredients.filter((i) => !i.header).length} ingredient lines${read.ocr ? ' with text recognition. Check them against the original' : ''}.`;
         await saveOpen(); renderDialog();
       } else note.innerHTML = `<span class="warn">Couldn't read any text: ${esc(read.why || 'unknown problem')}.</span>`;
-    } catch (e) { note.innerHTML = `<span class="warn">Couldn't read the PDF: ${esc(e.message)}</span>`; }
-    btn.disabled = false; btn.textContent = 'Read PDF again';
+    } catch (e) { note.innerHTML = `<span class="warn">Couldn't read the file: ${esc(e.message)}</span>`; }
+    btn.disabled = false; btn.textContent = 'Read file again';
   });
 
   let deleteArmed = null;
